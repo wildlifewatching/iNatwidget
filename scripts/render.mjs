@@ -67,6 +67,46 @@ function speciesName(obs) {
   return taxon.preferred_common_name || taxon.name || "Unidentified";
 }
 
+// iNaturalist gives dates as YYYY-MM-DD; re-order to DD-MM-YYYY for an
+// Australian audience. Falls back to the raw string if it's not that shape.
+function formatDateAU(dateStr) {
+  if (!dateStr) return "";
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return dateStr;
+  const [y, m, d] = parts;
+  return `${d}-${m}-${y}`;
+}
+
+// Greedy word-wrap onto lines of roughly `maxChars` characters each, so a
+// long species name doesn't overflow into the next tile. If wrapping needs
+// more than `maxLines` lines, the extra content is never silently dropped -
+// the last kept line gets an ellipsis so it's visibly truncated instead.
+function wrapName(name, maxChars = 16, maxLines = 2) {
+  const words = String(name).split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || !current) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+
+  if (lines.length > maxLines) {
+    lines.length = maxLines; // drop the overflow lines...
+    let last = lines[maxLines - 1];
+    if (last.length + 1 > maxChars) {
+      last = last.slice(0, maxChars - 1);
+    }
+    lines[maxLines - 1] = last + "\u2026"; // ...but always flag the cut visibly
+  }
+  return lines;
+}
+
 async function toDataUri(url) {
   if (!url) return null;
   try {
@@ -96,27 +136,34 @@ export async function prepareObservations(observations, { photoSize = "small" } 
   return Promise.all(
     observations.map(async (obs) => ({
       name: speciesName(obs),
-      date: obs.observed_on || "",
+      date: formatDateAU(obs.observed_on || ""),
       dataUri: await toDataUri(photoUrl(obs, photoSize)),
     }))
   );
 }
 
 function cell(item, x, y, cellSize) {
-  const name = escapeXml(item.name);
+  const nameLines = wrapName(item.name).map((line) => escapeXml(line));
   const date = escapeXml(item.date);
   const imgTag = item.dataUri
     ? `<image href="${item.dataUri}" width="${cellSize}" height="${cellSize}" preserveAspectRatio="xMidYMid slice" />`
     : `<rect width="${cellSize}" height="${cellSize}" fill="#e5e5e5" />`;
-  const textY1 = cellSize + 16;
-  const textY2 = cellSize + 32;
   const cx = cellSize / 2;
+  const lineHeight = 14;
+  const nameStartY = cellSize + 16;
+  const nameText = nameLines
+    .map(
+      (line, i) =>
+        `<text x="${cx}" y="${nameStartY + i * lineHeight}" font-size="12" text-anchor="middle" font-family="sans-serif" fill="#222">${line}</text>`
+    )
+    .join("");
+  const dateY = nameStartY + nameLines.length * lineHeight;
   return `
     <g transform="translate(${x}, ${y})">
       <rect width="${cellSize}" height="${cellSize}" rx="8" fill="none" stroke="#ddd" />
       ${imgTag}
-      <text x="${cx}" y="${textY1}" font-size="12" text-anchor="middle" font-family="sans-serif" fill="#222">${name}</text>
-      <text x="${cx}" y="${textY2}" font-size="10" text-anchor="middle" font-family="sans-serif" fill="#888">${date}</text>
+      ${nameText}
+      <text x="${cx}" y="${dateY}" font-size="10" text-anchor="middle" font-family="sans-serif" fill="#888">${date}</text>
     </g>`;
 }
 
@@ -130,7 +177,7 @@ export function buildSvg(items, { title = "Recent sightings", columns = 5 } = {}
   const cellSize = 120;
   const cellGap = 20;
   const cellW = cellSize + cellGap;
-  const cellH = cellSize + 56;
+  const cellH = cellSize + 68; // room for up to 2 wrapped name lines + the date
   const padding = 16;
   const headerH = 40;
 
