@@ -67,6 +67,14 @@ function speciesName(obs) {
   return taxon.preferred_common_name || taxon.name || "Unidentified";
 }
 
+function scientificName(obs) {
+  return (obs.taxon && obs.taxon.name) || "";
+}
+
+function observationUrl(obs) {
+  return `https://www.inaturalist.org/observations/${obs.id}`;
+}
+
 // iNaturalist gives dates as YYYY-MM-DD; re-order to DD-MM-YYYY for an
 // Australian audience. Falls back to the raw string if it's not that shape.
 function formatDateAU(dateStr) {
@@ -136,8 +144,12 @@ export async function prepareObservations(observations, { photoSize = "small" } 
   return Promise.all(
     observations.map(async (obs) => ({
       name: speciesName(obs),
+      scientificName: scientificName(obs),
       date: formatDateAU(obs.observed_on || ""),
-      dataUri: await toDataUri(photoUrl(obs, photoSize)),
+      place: obs.place_guess || "",
+      url: observationUrl(obs),
+      photoUrl: photoUrl(obs, photoSize), // raw external URL - used by the HTML-card version
+      dataUri: await toDataUri(photoUrl(obs, photoSize)), // base64 - used by the SVG version
     }))
   );
 }
@@ -208,4 +220,90 @@ export function buildSvg(items, { title = "Recent sightings", columns = 5 } = {}
   ${cells}
   ${emptyMsg}
 </svg>`;
+}
+
+function htmlCard(item) {
+  const place = item.place
+    ? `<div><strong>Location:</strong> ${escapeXml(item.place)}</div>`
+    : "";
+  return `
+    <a class="card" href="${escapeXml(item.url)}" target="_blank" rel="noopener">
+      <img src="${escapeXml(item.photoUrl || "")}" alt="${escapeXml(item.name)}" loading="lazy" />
+      <div class="body">
+        <div class="name">${escapeXml(item.name)}</div>
+        <div class="sci">${escapeXml(item.scientificName)}</div>
+        <div class="meta">
+          <div><strong>Observer:</strong> ryber</div>
+          <div><strong>Date:</strong> ${escapeXml(item.date)}</div>
+          ${place}
+        </div>
+      </div>
+    </a>`;
+}
+
+/**
+ * Alternative to buildSvg(): a plain HTML fragment (not an image) with real,
+ * clickable links to each observation and a card layout. Unlike the SVG
+ * version this is NOT meant to be embedded via <img src="...">; it's meant
+ * to be copy-pasted directly into a WordPress Custom HTML block, since only
+ * that gives real <a> links and hover states - a flat image can't have
+ * either no matter how it's built. It goes stale as new sightings come in,
+ * so re-copy it whenever you want a refresh, rather than it updating itself.
+ *
+ * @param {Array} items - output of prepareObservations()
+ * @param {object} opts
+ * @param {string} [opts.title]
+ * @param {string} [opts.viewMoreUrl]
+ * @param {string} [opts.poweredByUrl]
+ * @param {number} [opts.columns]
+ */
+export function buildHtmlCards(
+  items,
+  {
+    title = "Recent sightings",
+    viewMoreUrl = "https://www.inaturalist.org/observations?user_id=ryber",
+    poweredByUrl = "https://github.com/wildlifewatching/iNatwidget",
+    columns = 4,
+  } = {}
+) {
+  const cardsHtml = items.map(htmlCard).join("\n");
+  const emptyMsg = items.length
+    ? ""
+    : `<p style="color:#888;font-size:13px;">No sightings found for this range yet.</p>`;
+
+  return `<style>
+.inat-widget { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 900px; margin: 0 auto; }
+.inat-widget .heading { font-size: 18px; font-weight: 700; color: #222; margin-bottom: 12px; }
+.inat-widget .grid { display: grid; grid-template-columns: repeat(${columns}, 1fr); gap: 14px; }
+.inat-widget .card {
+  display: block; border: 1px solid #e2e2e2; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08); background: #fff; text-decoration: none; color: inherit;
+}
+.inat-widget .card img { width: 100%; height: 140px; object-fit: cover; display: block; background: #eee; }
+.inat-widget .card .body { padding: 10px 12px; }
+.inat-widget .card .name { color: #2e7d32; font-weight: 600; font-size: 14px; }
+.inat-widget .card .sci { color: #2e7d32; font-style: italic; font-size: 12px; margin-bottom: 6px; }
+.inat-widget .card .meta { color: #555; font-size: 12px; line-height: 1.5; }
+.inat-widget .footer {
+  display: flex; justify-content: space-between; margin-top: 14px; font-size: 12px;
+  border-top: 1px solid #eee; padding-top: 8px;
+}
+.inat-widget .footer a { text-decoration: none; }
+.inat-widget .footer a.view-more { color: #2e7d32; }
+.inat-widget .footer a.powered-by { color: #999; }
+@media (max-width: 640px) {
+  .inat-widget .grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+<div class="inat-widget">
+  <div class="heading">${escapeXml(title)}</div>
+  <div class="grid">
+    ${cardsHtml}
+  </div>
+  ${emptyMsg}
+  <div class="footer">
+    <a class="view-more" href="${escapeXml(viewMoreUrl)}">View more on iNaturalist →</a>
+    <a class="powered-by" href="${escapeXml(poweredByUrl)}">Powered by iNat Tools</a>
+  </div>
+</div>`;
 }
