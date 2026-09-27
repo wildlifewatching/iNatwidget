@@ -59,12 +59,40 @@ function speciesName(obs) {
   return taxon.preferred_common_name || taxon.name || "Unidentified";
 }
 
-function cell(obs, x, y, cellSize) {
-  const img = photoUrl(obs);
-  const name = escapeXml(speciesName(obs));
-  const date = escapeXml(obs.observed_on || "");
-  const imgTag = img
-    ? `<image href="${escapeXml(img)}" width="${cellSize}" height="${cellSize}" preserveAspectRatio="xMidYMid slice" />`
+async function toDataUri(url) {
+  if (!url) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const buf = Buffer.from(await res.arrayBuffer());
+    return `data:${contentType};base64,${buf.toString("base64")}`;
+  } catch {
+    return null; // fall back to a placeholder rather than fail the whole build
+  }
+}
+
+/**
+ * Turns raw iNaturalist observation objects into plain {name, date, dataUri}
+ * records, downloading each photo and inlining it as base64. Needed because
+ * an SVG loaded via <img src="..."> is blocked from fetching any external
+ * resource at view time - the image bytes have to already be inside the file.
+ */
+export async function prepareObservations(observations, { photoSize = "small" } = {}) {
+  return Promise.all(
+    observations.map(async (obs) => ({
+      name: speciesName(obs),
+      date: obs.observed_on || "",
+      dataUri: await toDataUri(photoUrl(obs, photoSize)),
+    }))
+  );
+}
+
+function cell(item, x, y, cellSize) {
+  const name = escapeXml(item.name);
+  const date = escapeXml(item.date);
+  const imgTag = item.dataUri
+    ? `<image href="${item.dataUri}" width="${cellSize}" height="${cellSize}" preserveAspectRatio="xMidYMid slice" />`
     : `<rect width="${cellSize}" height="${cellSize}" fill="#e5e5e5" />`;
   const textY1 = cellSize + 16;
   const textY2 = cellSize + 32;
@@ -79,12 +107,12 @@ function cell(obs, x, y, cellSize) {
 }
 
 /**
- * @param {Array} observations
+ * @param {Array} items - output of prepareObservations() - {name, date, dataUri}[]
  * @param {object} opts
  * @param {string} [opts.title]
  * @param {number} [opts.columns]
  */
-export function buildSvg(observations, { title = "Recent sightings", columns = 5 } = {}) {
+export function buildSvg(items, { title = "Recent sightings", columns = 5 } = {}) {
   const cellSize = 120;
   const cellGap = 20;
   const cellW = cellSize + cellGap;
@@ -92,24 +120,24 @@ export function buildSvg(observations, { title = "Recent sightings", columns = 5
   const padding = 16;
   const headerH = 40;
 
-  const count = observations.length || 1;
+  const count = items.length || 1;
   const cols = Math.min(columns, count);
-  const rows = Math.ceil(observations.length / cols) || 1;
+  const rows = Math.ceil(items.length / cols) || 1;
 
   const width = cols * cellW - cellGap + padding * 2;
   const height = headerH + rows * cellH + padding * 2;
 
-  const cells = observations
-    .map((obs, i) => {
+  const cells = items
+    .map((item, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = padding + col * cellW;
       const y = headerH + padding + row * cellH;
-      return cell(obs, x, y, cellSize);
+      return cell(item, x, y, cellSize);
     })
     .join("");
 
-  const emptyMsg = observations.length
+  const emptyMsg = items.length
     ? ""
     : `<text x="${padding}" y="${headerH + padding + 24}" font-size="13" font-family="sans-serif" fill="#888">No sightings found for this range yet.</text>`;
 
