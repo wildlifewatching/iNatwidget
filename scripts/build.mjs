@@ -1,11 +1,12 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { fetchObservations, buildSvg } from "./render.mjs";
+import { fetchObservations, prepareObservations, buildSvg } from "./render.mjs";
 
 const OUTPUT_DIR = "docs";
 
 async function generateRecent() {
   const observations = await fetchObservations({ limit: 10 });
-  const svg = buildSvg(observations, { title: "Recent sightings" });
+  const prepared = await prepareObservations(observations);
+  const svg = buildSvg(prepared, { title: "Recent sightings" });
   await writeFile(`${OUTPUT_DIR}/inat-widget-recent.svg`, svg, "utf8");
   console.log(`Wrote recent sightings widget (${observations.length} observations)`);
 }
@@ -26,7 +27,8 @@ async function generateTrips() {
       placeId: trip.place_id,
       limit: trip.limit || 20,
     });
-    const svg = buildSvg(observations, { title: trip.title || trip.id });
+    const prepared = await prepareObservations(observations);
+    const svg = buildSvg(prepared, { title: trip.title || trip.id });
     await writeFile(`${OUTPUT_DIR}/${trip.output}`, svg, "utf8");
     console.log(`Wrote trip widget "${trip.id}" (${observations.length} observations)`);
   }
