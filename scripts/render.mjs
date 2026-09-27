@@ -8,6 +8,14 @@
 const API_BASE = "https://api.inaturalist.org/v1/observations";
 const USERNAME = "ryber";
 
+// Some image CDNs quietly reject requests that don't look like they're
+// coming from a real browser - Node's default fetch User-Agent is generic
+// enough that this has been known to trip that up.
+const BROWSER_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+};
+
 /**
  * @param {object} opts
  * @param {string} [opts.d1] - start date, "YYYY-MM-DD" (inclusive)
@@ -28,7 +36,7 @@ export async function fetchObservations({ d1, d2, placeId, limit = 10 } = {}) {
   if (placeId) params.set("place_id", String(placeId));
 
   const url = `${API_BASE}?${params.toString()}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: BROWSER_HEADERS });
   if (!res.ok) {
     throw new Error(`iNaturalist API error ${res.status} ${res.statusText} for ${url}`);
   }
@@ -62,13 +70,19 @@ function speciesName(obs) {
 async function toDataUri(url) {
   if (!url) return null;
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
+    const res = await fetch(url, { headers: BROWSER_HEADERS });
+    if (!res.ok) {
+      console.warn(`Photo fetch failed (${res.status} ${res.statusText}): ${url}`);
+      return null;
+    }
     const contentType = res.headers.get("content-type") || "image/jpeg";
     const buf = Buffer.from(await res.arrayBuffer());
     return `data:${contentType};base64,${buf.toString("base64")}`;
-  } catch {
-    return null; // fall back to a placeholder rather than fail the whole build
+  } catch (err) {
+    // Log the real reason rather than silently falling back, so a broken
+    // build shows up clearly in the Action log instead of just grey boxes.
+    console.warn(`Photo fetch threw for ${url}:`, err.message || err);
+    return null; // still fall back to a placeholder rather than fail the whole build
   }
 }
 
